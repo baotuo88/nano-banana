@@ -27,7 +27,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   let selectedFiles = []; // {file, key}
 
-  // Key 状态
+  // Key 状态（有服务端 Key 就隐藏输入框）
   try {
     const response = await fetch('/api/key-status');
     if (response.ok) {
@@ -54,6 +54,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   fileInput.addEventListener('change', (e) => {
     const files = Array.from(e.target.files).filter(f => f.type.startsWith('image/'));
     handleFiles(files);
+    // 关键：重置 value，重复选择同一张图也会触发 change
+    e.target.value = '';
   });
 
   function buildFingerprint(file) { return `${file.name}__${file.size}__${file.lastModified}`; }
@@ -119,7 +121,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     safeSetResultStatus('正在生成...');
 
     try {
-      const base64Images = await Promise.all(selectedFiles.map(({ file }) => fileToBase64(file)));
+      // 压缩后再上传，显著提高成功率
+      const base64Images = await Promise.all(
+        selectedFiles.map(({ file }) => fileToCompressedDataURL(file, 1280, 1280, 0.9))
+      );
+
+      // 粗略计算总大小，>10MB 直接提示
+      const totalBytes = base64Images.reduce((acc, s) => acc + (s?.length || 0), 0);
+      if (totalBytes > 10 * 1024 * 1024) {
+        alert('图片总大小过大（>10MB），请减少张数或使用更小的图。');
+        setLoading(false);
+        return;
+      }
+
       const payload = {
         prompt: decoratePrompt(promptInput.value, sizeInput.value, styleInput.value),
         images: base64Images,          // 作为参考图/编辑图
@@ -162,42 +176,40 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (size === 'portrait') extras.push(`画幅：竖版`);
     if (size === 'landscape') extras.push(`画幅：横版`);
     if (size === 'square') extras.push(`画幅：正方形`);
+    // 强化“只返回图片”倾向（可按需移除）
+    extras.push('只返回生成的图像，不要任何文字描述。');
     return extras.length ? `${p}\n${extras.join('，')}` : p;
   }
 
-  // 展示多图 + 操作位（下载/分享/二次生成）
+  // 展示多图 + 操作位（下载/分享/二次生成），使用类名以匹配美化后的 CSS
   function showImages(urls) {
     resultContainer.replaceChildren();
+
     const grid = document.createElement('div');
-    grid.style.display = 'grid';
-    grid.style.gridTemplateColumns = 'repeat(auto-fill, minmax(180px,1fr))';
-    grid.style.gap = '10px';
+    grid.className = 'nb-grid';
 
     urls.forEach(u => {
-      const wrap = document.createElement('div');
-      wrap.style.background = '#252525';
-      wrap.style.borderRadius = '8px';
-      wrap.style.padding = '8px';
-      wrap.style.display = 'flex';
-      wrap.style.flexDirection = 'column';
-      wrap.style.gap = '6px';
+      const card = document.createElement('div');
+      card.className = 'nb-card-img';
 
       const img = document.createElement('img');
       img.src = u;
       img.alt = '生成的图片';
-      img.style.width = '100%';
-      img.style.borderRadius = '6px';
 
       const bar = document.createElement('div');
-      bar.style.display = 'flex';
-      bar.style.gap = '6px';
+      bar.className = 'nb-toolbar';
 
       const btnDL = mkBtn('下载', () => downloadDataUrl(u, `nano_${Date.now()}.png`));
       const btnShare = mkBtn('分享', async () => {
         try {
-          if (navigator.share) {
+          if (navigator.share && navigator.canShare) {
             const file = await dataURLtoFile(u, 'image.png');
-            await navigator.share({ files: [file], title: 'nano banana' });
+            if (navigator.canShare({ files: [file] })) {
+              await navigator.share({ files: [file], title: 'nano banana' });
+            } else {
+              await navigator.clipboard.writeText(u);
+              alert('已复制图片 DataURL，可自行分享');
+            }
           } else {
             await navigator.clipboard.writeText(u);
             alert('已复制图片 DataURL，可自行分享');
@@ -213,8 +225,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
 
       bar.append(btnDL, btnShare, btnRegen);
-      wrap.append(img, bar);
-      grid.append(wrap);
+      card.append(img, bar);
+      grid.append(card);
     });
 
     resultContainer.appendChild(grid);
@@ -223,11 +235,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   function mkBtn(text, onClick) {
     const b = document.createElement('button');
     b.textContent = text;
-    b.style.padding = '6px 8px';
-    b.style.borderRadius = '6px';
-    b.style.border = '1px solid #444';
-    b.style.background = '#1e1e1e';
-    b.style.color = '#eee';
+    b.className = 'nb-btn'; // 使用统一按钮样式
     b.addEventListener('click', onClick);
     return b;
   }
@@ -251,7 +259,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       entry.urls.forEach(u => {
         const img = document.createElement('img');
         img.src = u; img.alt = '历史图';
-        img.style.width = '100%'; img.style.borderRadius = '6px';
+        img.style.width = '100%'; img.style.borderRadius = '10px';
         img.title = new Date(entry.ts).toLocaleString();
         img.addEventListener('click', () => {
           showImages([u]);
@@ -293,10 +301,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   function safeSetResultStatus(text) {
     resultContainer.replaceChildren();
+    const box = document.createElement('div');
+    box.className = 'nb-result';
     const p = document.createElement('p');
     p.textContent = text;
-    resultContainer.appendChild(p);
+    box.appendChild(p);
+    resultContainer.appendChild(box);
   }
+
+  // 原始 base64
   function fileToBase64(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -305,11 +318,31 @@ document.addEventListener('DOMContentLoaded', async () => {
       reader.readAsDataURL(file);
     });
   }
+
+  // 压缩为 DataURL（最长边 1280，quality 0.9）
+  async function fileToCompressedDataURL(file, maxW = 1280, maxH = 1280, quality = 0.9) {
+    if (!file.type.startsWith('image/')) return await fileToBase64(file);
+    const bitmap = await createImageBitmap(file);
+    let { width, height } = bitmap;
+    const ratio = Math.min(maxW / width, maxH / height, 1);
+    const w = Math.round(width * ratio);
+    const h = Math.round(height * ratio);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, w, h);
+
+    // 优先 jpeg（体积更小）；png 图保留 png
+    const mime = file.type.includes('png') ? 'image/png' : 'image/jpeg';
+    return canvas.toDataURL(mime, quality);
+  }
+
   async function dataURLtoFile(dataUrl, filename) {
     const r = await fetch(dataUrl);
     const blob = await r.blob();
     return new File([blob], filename, { type: blob.type || 'image/png' });
-    }
+  }
   function downloadDataUrl(dataUrl, filename) {
     const a = document.createElement('a');
     a.href = dataUrl; a.download = filename; a.click();
