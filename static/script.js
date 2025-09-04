@@ -20,14 +20,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   const feedbackSubmit = document.getElementById('feedback-submit');
   const feedbackText = document.getElementById('feedback-text');
 
-  // 让整块上传区域可点击
   uploadArea.addEventListener('click', (e) => {
     if (!(e.target instanceof HTMLButtonElement)) fileInput.click();
   });
 
   let selectedFiles = []; // {file, key}
 
-  // Key 状态（有服务端 Key 就隐藏输入框）
+  // Key 状态
   try {
     const response = await fetch('/api/key-status');
     if (response.ok) {
@@ -54,8 +53,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   fileInput.addEventListener('change', (e) => {
     const files = Array.from(e.target.files).filter(f => f.type.startsWith('image/'));
     handleFiles(files);
-    // 关键：重置 value，重复选择同一张图也会触发 change
-    e.target.value = '';
+    e.target.value = ''; // 重复选择同一张图也能触发
   });
 
   function buildFingerprint(file) { return `${file.name}__${file.size}__${file.lastModified}`; }
@@ -104,7 +102,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  // 生成逻辑（多图）
+  // 生成逻辑
   generateBtn.addEventListener('click', async () => {
     const needKey = (apiKeySection.style.display !== 'none');
     if (needKey && !apiKeyInput.value.trim()) {
@@ -121,24 +119,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     safeSetResultStatus('正在生成...');
 
     try {
-      // 压缩后再上传，显著提高成功率
       const base64Images = await Promise.all(
         selectedFiles.map(({ file }) => fileToCompressedDataURL(file, 1280, 1280, 0.9))
       );
 
-      // 粗略计算总大小，>10MB 直接提示
-      const totalBytes = base64Images.reduce((acc, s) => acc + (s?.length || 0), 0);
-      if (totalBytes > 10 * 1024 * 1024) {
-        alert('图片总大小过大（>10MB），请减少张数或使用更小的图。');
-        setLoading(false);
-        return;
-      }
-
       const payload = {
         prompt: decoratePrompt(promptInput.value, sizeInput.value, styleInput.value),
-        images: base64Images,          // 作为参考图/编辑图
+        images: base64Images,
         apikey: apiKeyInput.value,
-        count,                         // 服务端循环生成
+        count,
       };
 
       const resp = await fetch('/generate', {
@@ -176,15 +165,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (size === 'portrait') extras.push(`画幅：竖版`);
     if (size === 'landscape') extras.push(`画幅：横版`);
     if (size === 'square') extras.push(`画幅：正方形`);
-    // 强化“只返回图片”倾向（可按需移除）
     extras.push('只返回生成的图像，不要任何文字描述。');
     return extras.length ? `${p}\n${extras.join('，')}` : p;
   }
 
-  // 展示多图 + 操作位（下载/分享/二次生成），使用类名以匹配美化后的 CSS
   function showImages(urls) {
     resultContainer.replaceChildren();
-
     const grid = document.createElement('div');
     grid.className = 'nb-grid';
 
@@ -217,7 +203,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         } catch (e) { alert('分享失败：' + (e?.message || e)); }
       });
       const btnRegen = mkBtn('基于此图再生成', async () => {
-        // 把这张图当作输入图再次生成
         selectedFiles = []; thumbnailsContainer.innerHTML = '';
         const f = await dataURLtoFile(u, `ref_${Date.now()}.png`);
         handleFiles([f]);
@@ -235,30 +220,52 @@ document.addEventListener('DOMContentLoaded', async () => {
   function mkBtn(text, onClick) {
     const b = document.createElement('button');
     b.textContent = text;
-    b.className = 'nb-btn'; // 使用统一按钮样式
+    b.className = 'nb-btn';
     b.addEventListener('click', onClick);
     return b;
   }
 
-  // 历史记录（localStorage）
-  function appendHistory(urls, prompt) {
+  // ========== 历史记录 (修复版) ==========
+  async function appendHistory(fullImageUrls, prompt) {
     const key = 'nb_history';
-    const old = JSON.parse(localStorage.getItem(key) || '[]');
-    const item = { ts: Date.now(), prompt, urls };
-    const next = [item, ...old].slice(0, 60); // 最多保存 60 组
-    localStorage.setItem(key, JSON.stringify(next));
-    renderHistory(next);
+    let old = [];
+    try {
+      old = JSON.parse(localStorage.getItem(key) || '[]');
+      if (!Array.isArray(old)) old = [];
+    } catch { old = []; }
+
+    try {
+      const previews = await Promise.all(fullImageUrls.map(u => makePreviewDataURL(u, 320, 0.8)));
+      const item = { ts: Date.now(), prompt, previews };
+      const next = [item, ...old];
+      safeSetHistoryArray(key, next, 30);
+      renderHistory(next);
+    } catch (err) {
+      console.warn('生成历史预览失败', err);
+      renderHistory(old);
+    }
   }
+
   function loadHistory() {
-    const arr = JSON.parse(localStorage.getItem('nb_history') || '[]');
-    renderHistory(arr);
+    const key = 'nb_history';
+    try {
+      const arr = JSON.parse(localStorage.getItem(key) || '[]');
+      if (Array.isArray(arr)) renderHistory(arr);
+      else renderHistory([]);
+    } catch (e) {
+      console.warn('读取历史失败，清空', e);
+      try { localStorage.removeItem(key); } catch {}
+      renderHistory([]);
+    }
   }
+
   function renderHistory(arr) {
     historyContainer.replaceChildren();
     arr.forEach(entry => {
-      entry.urls.forEach(u => {
+      const previews = Array.isArray(entry.previews) ? entry.previews : [];
+      previews.forEach(u => {
         const img = document.createElement('img');
-        img.src = u; img.alt = '历史图';
+        img.src = u; img.alt = '历史图(预览)';
         img.style.width = '100%'; img.style.borderRadius = '10px';
         img.title = new Date(entry.ts).toLocaleString();
         img.addEventListener('click', () => {
@@ -269,7 +276,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  // 反馈
+  // ===== 反馈 =====
   feedbackBtn.addEventListener('click', () => {
     feedbackText.value = '';
     if (typeof feedbackDialog.showModal === 'function') feedbackDialog.showModal();
@@ -309,7 +316,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     resultContainer.appendChild(box);
   }
 
-  // 原始 base64
+  // ===== 工具函数 =====
   function fileToBase64(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -319,7 +326,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  // 压缩为 DataURL（最长边 1280，quality 0.9）
   async function fileToCompressedDataURL(file, maxW = 1280, maxH = 1280, quality = 0.9) {
     if (!file.type.startsWith('image/')) return await fileToBase64(file);
     const bitmap = await createImageBitmap(file);
@@ -333,9 +339,40 @@ document.addEventListener('DOMContentLoaded', async () => {
     const ctx = canvas.getContext('2d');
     ctx.drawImage(bitmap, 0, 0, w, h);
 
-    // 优先 jpeg（体积更小）；png 图保留 png
     const mime = file.type.includes('png') ? 'image/png' : 'image/jpeg';
     return canvas.toDataURL(mime, quality);
+  }
+
+  async function makePreviewDataURL(bigDataUrl, maxSide = 320, quality = 0.8) {
+    const resp = await fetch(bigDataUrl);
+    const blob = await resp.blob();
+    const bitmap = await createImageBitmap(blob);
+
+    const { width, height } = bitmap;
+    const ratio = Math.min(maxSide / Math.max(width, height), 1);
+    const w = Math.round(width * ratio);
+    const h = Math.round(height * ratio);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, w, h);
+
+    return canvas.toDataURL('image/jpeg', quality);
+  }
+
+  function safeSetHistoryArray(key, nextArray, maxItems = 30) {
+    let arr = nextArray.slice(0, maxItems);
+    while (arr.length > 0) {
+      try {
+        localStorage.setItem(key, JSON.stringify(arr));
+        return true;
+      } catch {
+        arr.pop(); // 删除最旧的再试
+      }
+    }
+    try { localStorage.removeItem(key); } catch {}
+    return false;
   }
 
   async function dataURLtoFile(dataUrl, filename) {
@@ -343,6 +380,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const blob = await r.blob();
     return new File([blob], filename, { type: blob.type || 'image/png' });
   }
+
   function downloadDataUrl(dataUrl, filename) {
     const a = document.createElement('a');
     a.href = dataUrl; a.download = filename; a.click();
