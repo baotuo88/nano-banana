@@ -1,51 +1,108 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>nano banana</title>
-    <link rel="icon" href="/bao.jpg" type="image/jpg">
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>nano banana</title>
+  <link rel="icon" href="/bao.jpg" type="image/jpg"/>
+  <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
-    <h1 class="title">🍌 nano banana</h1>
-    <p class="subtitle">(模型: google/gemini-2.5-flash-image-preview:free)</p>
-    <div class="main-container">
-        <div class="controls-container">
-            <div class="api-key-section">
-                <h2>设置</h2>
-                <input type="password" id="api-key-input" placeholder="输入你的 OpenRouter API 密钥 (必填)">
-            </div>
-            <div class="upload-section">
-                <h2>1. 上传图片</h2>
-                <div class="upload-area">
-                    <input type="file" id="image-upload" accept="image/*" multiple>
-                    <label for="image-upload">
-                        <p>点击或拖拽上传</p>
-                        <span>支持多张图片</span>
-                    </label>
-                </div>
-                <div id="thumbnails-container"></div>
-            </div>
+  <h1 class="title">🍌 <span>nano banana</span></h1>
+  <p class="subtitle">(模型: google/gemini-2.5-flash-image-preview)</p>
 
-            <div class="prompt-section">
-                <h2>2. 输入提示词</h2>
-                <textarea id="prompt-input" placeholder="例如：一只穿着超级英雄斗篷的猫，电影级灯光"></textarea>
-            </div>
+  <div class="main-container">
+    <div class="controls-container">
+      <div class="api-key-section">
+        <h2>设置</h2>
+        <input type="password" id="api-key-input" placeholder="输入你的 OpenRouter API 密钥 (必填)">
+      </div>
 
-            <button id="generate-btn">
-                <span class="btn-text">生成</span>
-                <span class="spinner hidden"></span>
-            </button>
+      <div class="upload-section">
+        <h2>1. 上传图片</h2>
+        <div class="upload-area">
+          <input type="file" id="image-upload" accept="image/*" multiple>
+          <label for="image-upload">
+            <p>点击或拖拽上传</p>
+            <span>支持多张图片</span>
+          </label>
         </div>
+        <div id="thumbnails-container"></div>
+      </div>
 
-        <div class="result-container">
-            <h2>生成结果</h2>
-            <div id="result-image-container">
-                <p>生成的图片将显示在这里</p>
-            </div>
+      <div class="prompt-section">
+        <h2>2. 提示词</h2>
+        <textarea id="prompt-input" placeholder="例如：一只穿着超级英雄斗篷的猫，电影级灯光"></textarea>
+
+        <!-- Prompt 模板 -->
+        <div style="margin:6px 0;">
+          <button class="tpl-btn" data-tpl="赛博朋克风霓虹城市，高对比度，镜头光晕">赛博朋克</button>
+          <button class="tpl-btn" data-tpl="皮克斯动画风，柔光，暖色调，Q版">动画风</button>
+          <button class="tpl-btn" data-tpl="写实摄影，浅景深，电影级打光">写实摄影</button>
+          <button class="tpl-btn" data-tpl="水彩插画，柔和配色，细腻笔触">水彩插画</button>
         </div>
+      </div>
+
+      <!-- 生成参数 -->
+      <div class="param-section">
+        <h2>3. 参数</h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div>
+            <label>数量</label>
+            <input id="count-input" type="number" min="1" max="4" value="2"/>
+          </div>
+          <div>
+            <label>尺寸</label>
+            <select id="size-input">
+              <option value="square">正方形</option>
+              <option value="portrait">竖版</option>
+              <option value="landscape">横版</option>
+            </select>
+          </div>
+          <div>
+            <label>风格</label>
+            <select id="style-input">
+              <option value="">默认</option>
+              <option value="写实">写实</option>
+              <option value="插画">插画</option>
+              <option value="动漫">动漫</option>
+              <option value="像素风">像素风</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <button id="generate-btn">
+        <span class="btn-text">生成</span>
+        <span class="spinner hidden"></span>
+      </button>
+
+      <button id="feedback-btn" style="margin-top:10px;">反馈问题或建议</button>
     </div>
-    <script src="script.js"></script>
+
+    <div class="result-container">
+      <h2>生成结果</h2>
+      <div id="result-image-container">
+        <p>生成的图片将显示在这里</p>
+      </div>
+
+      <h2 style="margin-top:16px;">历史记录</h2>
+      <div id="history-container" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(120px,1fr));gap:10px;"></div>
+    </div>
+  </div>
+
+  <!-- 反馈弹窗 -->
+  <dialog id="feedback-dialog">
+    <form method="dialog" style="min-width:320px">
+      <h3>提交反馈</h3>
+      <textarea id="feedback-text" placeholder="描述你的问题或建议…" style="width:100%;min-height:120px"></textarea>
+      <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:10px;">
+        <button id="feedback-cancel">取消</button>
+        <button id="feedback-submit" value="submit">提交</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="script.js"></script>
 </body>
 </html>
